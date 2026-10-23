@@ -1,0 +1,21 @@
+# Gradle build output
+.gradle/
+build/
+app/build/
+*/build/
+
+# Local machine config
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/settings.json
+
+# Keystore (never commit)
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
