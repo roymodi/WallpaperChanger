@@ -34,13 +34,9 @@ object WallpaperScheduler {
         )
     }
 
-    fun schedulePeriodicWork(context: Context) {
-        schedulePeriodicWork(context, 6)
-    }
-
     fun cancelPeriodicWork(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelUniqueWork("wallpaper_change_work")
-        // Keep an existing periodic refill schedule if already installed.
+        // Existing periodic refill is kept to avoid replacing its schedule on every app open.
     }
 }
