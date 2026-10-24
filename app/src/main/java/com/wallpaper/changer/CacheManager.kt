@@ -6,8 +6,8 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * Small bounded cache: at most five images and 40 MiB total.
- * Files are written atomically so interrupted downloads do not leave partial images.
+ * Bounded rotating cache: at most ten images and 80 MiB total.
+ * A downloaded image is published only after the complete temporary file is written.
  */
 class CacheManager(context: Context) {
     private val cacheDir = File(context.cacheDir, "wallpaper_cache").apply { mkdirs() }
@@ -33,7 +33,6 @@ class CacheManager(context: Context) {
             val file = File(cacheDir, "${PREFIX}$id.jpg")
             val temp = File(cacheDir, "${PREFIX}$id.tmp")
             temp.writeBytes(bytes)
-            if (file.exists()) file.delete()
             if (!temp.renameTo(file)) {
                 temp.copyTo(file, overwrite = true)
                 temp.delete()
@@ -45,7 +44,6 @@ class CacheManager(context: Context) {
             val metaTemp = File(cacheDir, "${PREFIX}$id.meta.tmp")
             metaTemp.writeText(meta.toString())
             val metaFile = metaFileFor(file)
-            if (metaFile.exists()) metaFile.delete()
             if (!metaTemp.renameTo(metaFile)) {
                 metaTemp.copyTo(metaFile, overwrite = true)
                 metaTemp.delete()
@@ -72,7 +70,9 @@ class CacheManager(context: Context) {
                 val sourceUrl = json.getString("sourceUrl")
                 if (excludeIdentifiers.contains(imageUrl) || dbHelper.isWallpaperUsed(imageUrl)) {
                     null
-                } else CachedWallpaper(file, imageUrl, sourceUrl)
+                } else {
+                    CachedWallpaper(file, imageUrl, sourceUrl)
+                }
             } catch (_: Exception) {
                 null
             }
@@ -109,8 +109,12 @@ class CacheManager(context: Context) {
                 metaFileFor(file).delete()
             }
         }
-        // Clean up incomplete temporary files and orphaned metadata.
         cacheDir.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach { it.delete() }
+        // Remove metadata files whose corresponding image no longer exists.
+        cacheDir.listFiles()?.filter { it.name.endsWith(".meta") }?.forEach { meta ->
+            val image = File(cacheDir, meta.name.removeSuffix(".meta") + ".jpg")
+            if (!image.exists()) meta.delete()
+        }
     }
 
     private fun filename(url: String) = "${PREFIX}${identifier(url)}.jpg"
@@ -123,8 +127,8 @@ class CacheManager(context: Context) {
 
     companion object {
         private const val PREFIX = "wp_"
-        private const val MAX_IMAGES = 5
+        private const val MAX_IMAGES = 10
         private const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
-        private const val MAX_CACHE_BYTES = 40L * 1024 * 1024
+        private const val MAX_CACHE_BYTES = 80L * 1024 * 1024
     }
 }
