@@ -101,7 +101,7 @@ class NetworkHelper {
         if (value.isEmpty() || value.startsWith("data:", true)) return
         try {
             val url = value.toHttpUrlOrNull() ?: return
-            if (url.isHttps || url.isHttp) {
+            if (url.scheme == "https" || url.scheme == "http") {
                 val lower = url.encodedPath.lowercase()
                 // Extension is not mandatory: many CDNs serve images without one.
                 if (!lower.endsWith(".svg") && !lower.endsWith(".gif") &&
