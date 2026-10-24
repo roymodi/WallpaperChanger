@@ -75,8 +75,13 @@ class MainActivity : AppCompatActivity() {
             WallpaperPrefetcher.topUp(this@MainActivity)
         }
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<WallpaperWorker>()
+            .addTag("wallpaper_change")
             .build()
-        androidx.work.WorkManager.getInstance(this).enqueue(workRequest)
+        androidx.work.WorkManager.getInstance(this).enqueueUniqueWork(
+            "wallpaper_change",
+            androidx.work.ExistingWorkPolicy.KEEP,
+            workRequest
+        )
         Toast.makeText(this, "Changing wallpaper…", Toast.LENGTH_SHORT).show()
     }
 
