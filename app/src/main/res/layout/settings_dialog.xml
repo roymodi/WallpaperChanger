@@ -48,16 +48,17 @@
             android:layout_marginTop="24dp" />
 
         <Switch
-            android:id="@+id/switchScreenOff"
+            android:id="@+id/switchScreenActivity"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/trigger_on_screen_off" />
+            android:text="@string/trigger_on_screen_activity" />
 
-        <Switch
-            android:id="@+id/switchUnlock"
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/trigger_on_unlock" />
+            android:layout_marginTop="4dp"
+            android:text="@string/screen_activity_help"
+            android:textSize="12sp" />
 
     </LinearLayout>
 </ScrollView>
