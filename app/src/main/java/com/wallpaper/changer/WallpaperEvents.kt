@@ -37,7 +37,7 @@ class WallpaperChangerApp : Application() {
 /** Enqueues wallpaper work instead of doing network or bitmap work inside a receiver. */
 class ScreenStateReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(context: android.content.Context, intent: Intent) {
-        val prefs = context.getSharedPreferences("wallpaper_prefs", MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("wallpaper_prefs", android.content.Context.MODE_PRIVATE)
         val enabled = when (intent.action) {
             Intent.ACTION_SCREEN_OFF -> prefs.getBoolean("screen_off_trigger", false)
             Intent.ACTION_USER_PRESENT -> prefs.getBoolean("unlock_trigger", false)
