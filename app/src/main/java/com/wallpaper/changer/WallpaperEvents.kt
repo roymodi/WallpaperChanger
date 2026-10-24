@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.util.Log
+import androidx.work.Constraints
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
@@ -51,12 +53,22 @@ class ScreenStateReceiver : android.content.BroadcastReceiver() {
             .setInitialDelay(if (intent.action == Intent.ACTION_USER_PRESENT) 700 else 0, TimeUnit.MILLISECONDS)
             .addTag("wallpaper_change")
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "wallpaper_change", androidx.work.ExistingWorkPolicy.KEEP, request
+        )
         if (intent.action == Intent.ACTION_USER_PRESENT) enqueuePrefetch(context)
     }
 
     private fun enqueuePrefetch(context: android.content.Context) {
-        val request = OneTimeWorkRequestBuilder<PrefetchWorker>().addTag("wallpaper_prefetch").build()
+        val request = OneTimeWorkRequestBuilder<PrefetchWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .build()
+            )
+            .addTag("wallpaper_prefetch")
+            .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             "wallpaper_prefetch", androidx.work.ExistingWorkPolicy.KEEP, request
         )
@@ -67,7 +79,14 @@ class ScreenStateReceiver : android.content.BroadcastReceiver() {
 class BootReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(context: android.content.Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val request = OneTimeWorkRequestBuilder<PrefetchWorker>().build()
+        val request = OneTimeWorkRequestBuilder<PrefetchWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .build()
+            )
+            .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             "wallpaper_prefetch_after_boot", androidx.work.ExistingWorkPolicy.KEEP, request
         )
