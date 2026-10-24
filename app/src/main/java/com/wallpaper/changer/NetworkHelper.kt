@@ -1,119 +1,129 @@
 package com.wallpaper.changer
 
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
-import java.io.InputStream
-import java.net.URL
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 /**
- * Handles HTML scraping to find image URLs and downloading image data.
- * Uses Jsoup for parsing and OkHttp for robust downloading.
+ * Downloads image candidates from ordinary HTML wallpaper galleries.
+ * JavaScript-only galleries and sites requiring login may still need a dedicated API.
  */
 class NetworkHelper {
-
     private val client = OkHttpClient.Builder()
         .followRedirects(true)
         .followSslRedirects(true)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    /**
-     * Fetches the HTML content of a page and extracts image URLs.
-     * Returns a list of absolute image URLs found on the page.
-     */
     suspend fun scrapeImageUrls(pageUrl: String): List<String> = withContext(Dispatchers.IO) {
-        val imageUrls = mutableListOf<String>()
         try {
-            val document: Document = Jsoup.connect(pageUrl)
-                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .timeout(15000)
-                .get()
+            val request = Request.Builder()
+                .url(pageUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val html = response.body?.string()?.take(MAX_HTML_CHARS) ?: return@withContext emptyList()
+                val doc = Jsoup.parse(html, response.request.url.toString())
+                val found = linkedSetOf<String>()
 
-            // Generic selectors for common wallpaper sites
-            // Unsplash uses figure/img with srcset; mob.org uses .wallpaper img
-            val selectors = listOf(
-                "img[src]",
-                "img[data-src]",
-                "figure img",
-                ".wallpaper img",
-                ".thumb img",
-                "a[href\$=.jpg] img"
-            )
+                // Prefer full-resolution Open Graph / Twitter images when present.
+                doc.select("meta[property=og:image], meta[name=twitter:image], meta[property=og:image:secure_url]")
+                    .forEach { addCandidate(found, it.attr("content")) }
 
-            for (selector in selectors) {
-                val elements = document.select(selector)
-                for (element in elements) {
-                    // Try src, then data-src, then srcset
-                    val src = element.attr("abs:src").ifEmpty {
-                        element.attr("abs:data-src").ifEmpty {
-                            element.attr("srcset").split(" ").firstOrNull() ?: ""
-                        }
+                doc.select("img[src], img[data-src], img[data-original], img[data-lazy-src], source[srcset], img[srcset]")
+                    .forEach { element ->
+                        listOf("src", "data-src", "data-original", "data-lazy-src")
+                            .map { element.attr(it) }
+                            .filter { it.isNotBlank() }
+                            .forEach { addCandidate(found, element.absUrl(it)) }
+
+                        // srcset entries are "URL width"; split on commas and keep the URL.
+                        element.attr("srcset").split(',')
+                            .map { it.trim().substringBefore(Regex("\\s+")) }
+                            .filter { it.isNotBlank() }
+                            .forEach { addCandidate(found, element.absUrl(it)) }
                     }
-                    if (src.isNotEmpty() && isValidImageUrl(src)) {
-                        imageUrls.add(src)
-                    }
-                }
-                if (imageUrls.isNotEmpty()) break // Use first working selector
+
+                found.take(MAX_CANDIDATES).toList()
             }
-
-            // Deduplicate
-            return@withContext imageUrls.distinct()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext emptyList()
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
-    /**
-     * Downloads an image from a URL and returns a Bitmap.
-     */
-    suspend fun downloadImage(imageUrl: String): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun downloadBytes(imageUrl: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
                 .url(imageUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8")
                 .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body ?: return@withContext null
+                val type = body.contentType()?.type
+                if (type != "image") return@withContext null
+                val declaredLength = body.contentLength()
+                if (declaredLength > MAX_IMAGE_BYTES) return@withContext null
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext null
-
-            val inputStream: InputStream? = response.body?.byteStream()
-            val bitmap = BitmapFactory.decodeStream(inputStream)
-            inputStream?.close()
-            response.close()
-            bitmap
-        } catch (e: Exception) {
-            e.printStackTrace()
+                // Read in bounded chunks to avoid unbounded memory use.
+                val output = java.io.ByteArrayOutputStream()
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > MAX_IMAGE_BYTES) return@withContext null
+                        output.write(buffer, 0, read)
+                    }
+                }
+                val bytes = output.toByteArray()
+                if (!isDecodableImage(bytes)) null else bytes
+            }
+        } catch (_: Exception) {
             null
         }
     }
 
-    /**
-     * Downloads raw bytes for caching without decoding.
-     */
-    suspend fun downloadBytes(imageUrl: String): ByteArray? = withContext(Dispatchers.IO) {
+    private fun addCandidate(out: MutableSet<String>, raw: String) {
+        val value = raw.trim()
+        if (value.isEmpty() || value.startsWith("data:", true)) return
         try {
-            val request = Request.Builder().url(imageUrl).build()
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext null
-            val bytes = response.body?.bytes()
-            response.close()
-            bytes
-        } catch (e: Exception) {
-            null
-        }
+            val url = okhttp3.HttpUrl.Companion.toHttpUrlOrNull(value) ?: return
+            if (url.isHttps || url.isHttp) {
+                val lower = url.encodedPath.lowercase()
+                // Extension is not mandatory: many CDNs serve images without one.
+                if (!lower.endsWith(".svg") && !lower.endsWith(".gif") &&
+                    !url.host.contains("gravatar.com") && !url.host.contains("logo")) {
+                    out.add(url.toString())
+                }
+            }
+        } catch (_: Exception) { }
     }
 
-    private fun isValidImageUrl(url: String): Boolean {
-        val lower = url.lowercase()
-        return (lower.contains(".jpg") || lower.contains(".jpeg") ||
-                lower.contains(".png") || lower.contains(".webp")) &&
-                !lower.contains("icon") && !lower.contains("logo") &&
-                !lower.contains("avatar") && !lower.contains("thumb")
+    private fun isDecodableImage(bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return false
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        return options.outWidth in 320..12000 && options.outHeight in 320..12000 &&
+            options.outMimeType in setOf("image/jpeg", "image/png", "image/webp", "image/avif")
+    }
+
+    companion object {
+        const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
+        private const val MAX_HTML_CHARS = 2_000_000
+        private const val MAX_CANDIDATES = 100
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
     }
 }
