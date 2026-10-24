@@ -11,10 +11,10 @@
     <string name="target_screen">Target Screen</string>
     <string name="home_screen">Home Screen Only</string>
     <string name="lock_screen">Lock Screen Only</string>
-    <string name="both_screens">Both Screens</string>
-    <string name="event_triggers">Event Triggers</string>
-    <string name="trigger_on_screen_off">Change on screen off</string>
-    <string name="trigger_on_unlock">Change on unlock</string>
+    <string name="both_screens">Different wallpapers for Home and Lock Screens</string>
+    <string name="event_triggers">Automatic Change</string>
+    <string name="trigger_on_screen_activity">Change once per lock/unlock cycle</string>
+    <string name="screen_activity_help">Changes at screen-off, or at unlock if screen-off was missed. The app ignores the paired event to avoid changing twice.</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="add">Add</string>
