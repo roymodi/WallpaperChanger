@@ -26,7 +26,7 @@ class WallpaperWorker(context: Context, params: WorkerParameters) : CoroutineWor
             if (cached == null) {
                 cached = downloadFreshWallpaper(context, db, cache, network)
             }
-            if (cached == null) return Result.retry()
+            if (cached == null) return if (runAttemptCount >= MAX_RETRIES) Result.failure() else Result.retry()
 
             val bitmap = decodeWallpaper(cached.file.absolutePath) ?: run {
                 cache.consumeWallpaper(cached)
@@ -56,10 +56,10 @@ class WallpaperWorker(context: Context, params: WorkerParameters) : CoroutineWor
             if (!applied) return Result.retry()
             db.logWallpaper(cached.imageUrl, cached.imageUrl.substringAfterLast("/"), cached.sourceUrl)
             cache.consumeWallpaper(cached)
-            WallpaperPrefetcher.topUp(context)
+            // Cache refill is handled by a separate network- and battery-constrained worker.
             Result.success()
         } catch (_: Exception) {
-            Result.retry()
+            if (runAttemptCount >= MAX_RETRIES) Result.failure() else Result.retry()
         }
     }
 
@@ -85,7 +85,7 @@ class WallpaperWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val sources = (PreloadedUrls.ALL_URLS +
             (prefs.getStringSet("custom_urls", emptySet()) ?: emptySet())).distinct().shuffled()
         for (source in sources.take(MAX_SOURCE_ATTEMPTS)) {
-            val imageUrls = network.scrapeImageUrls(source).shuffled()
+            val imageUrls = network.scrapeImageUrls(source).shuffled().take(MAX_IMAGE_ATTEMPTS_PER_SOURCE)
             for (url in imageUrls) {
                 if (excludeIdentifiers.contains(url) || db.isWallpaperUsed(url) || cache.getCachedFile(url) != null) continue
                 val bytes = network.downloadBytes(url) ?: continue
@@ -98,6 +98,8 @@ class WallpaperWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
     companion object {
         private const val MAX_DECODE_DIMENSION = 4096
-        private const val MAX_SOURCE_ATTEMPTS = 8
+        private const val MAX_SOURCE_ATTEMPTS = 4
+        private const val MAX_IMAGE_ATTEMPTS_PER_SOURCE = 5
+        private const val MAX_RETRIES = 2
     }
 }
