@@ -3,6 +3,7 @@ package com.wallpaper.changer
 import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
@@ -48,7 +49,7 @@ class NetworkHelper {
 
                         // srcset entries are "URL width"; split on commas and keep the URL.
                         element.attr("srcset").split(',')
-                            .map { it.trim().substringBefore(Regex("\\s+")) }
+                            .map { it.trim().split(Regex("\\s+")).firstOrNull().orEmpty() }
                             .filter { it.isNotBlank() }
                             .forEach { addCandidate(found, element.absUrl(it)) }
                     }
@@ -100,7 +101,7 @@ class NetworkHelper {
         val value = raw.trim()
         if (value.isEmpty() || value.startsWith("data:", true)) return
         try {
-            val url = okhttp3.HttpUrl.Companion.toHttpUrlOrNull(value) ?: return
+            val url = value.toHttpUrlOrNull() ?: return
             if (url.isHttps || url.isHttp) {
                 val lower = url.encodedPath.lowercase()
                 // Extension is not mandatory: many CDNs serve images without one.
