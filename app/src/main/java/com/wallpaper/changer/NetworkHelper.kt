@@ -7,7 +7,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -72,7 +71,7 @@ class NetworkHelper {
                 if (!response.isSuccessful) return@withContext null
                 val body = response.body ?: return@withContext null
                 val type = body.contentType()?.type
-                if (type != "image") return@withContext null
+                if (type != null && type != "image") return@withContext null
                 val declaredLength = body.contentLength()
                 if (declaredLength > MAX_IMAGE_BYTES) return@withContext null
 
