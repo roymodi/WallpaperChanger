@@ -1,5 +1,6 @@
 package com.wallpaper.changer
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
@@ -19,6 +20,21 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Start screen monitoring from a visible activity. Android requires a foreground
+        // notification for a service that must remain active in the background.
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(
+                this,
+                Intent(this, WallpaperMonitorService::class.java)
+            )
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Could not start automatic monitoring. Open the app again and check battery settings.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
         dbHelper = DatabaseHelper(this)
         cacheManager = CacheManager(this)
         statusText = findViewById(R.id.statusText)
@@ -26,7 +42,6 @@ class MainActivity : AppCompatActivity() {
         WallpaperScheduler.cancelPeriodicWork(this)
         WallpaperScheduler.schedulePeriodicWork(this)
 
-        // Start filling the ten-image buffer when the app opens.
         lifecycleScope.launch {
             WallpaperPrefetcher.topUp(this@MainActivity)
             updateStatus()
@@ -76,7 +91,7 @@ class MainActivity : AppCompatActivity() {
             .build()
         androidx.work.WorkManager.getInstance(this).enqueueUniqueWork(
             "wallpaper_change",
-            androidx.work.ExistingWorkPolicy.KEEP,
+            androidx.work.ExistingWorkPolicy.REPLACE,
             workRequest
         )
         Toast.makeText(this, "Changing wallpaper…", Toast.LENGTH_SHORT).show()
@@ -116,7 +131,6 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit()
                     .putString("target_screen", target)
                     .putBoolean("screen_activity_trigger", enabled)
-                    // Clear legacy switches so old settings cannot override the new one.
                     .putBoolean("screen_off_trigger", false)
                     .putBoolean("unlock_trigger", false)
                     .apply()
