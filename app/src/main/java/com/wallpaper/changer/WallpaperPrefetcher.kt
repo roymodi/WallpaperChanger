@@ -8,19 +8,13 @@ import kotlinx.coroutines.withContext
 import java.util.Random
 
 /**
- * Manages a rotating buffer of TARGET_BUFFER_SIZE wallpapers.
- *
- * Behavior:
- *  - topUp() fills the buffer to 5 wallpapers (safe to call anytime)
- *  - Uses a Mutex so only one topUp() runs at a time (prevents duplicate downloads)
- *  - Skips already-used and already-cached images
+ * Maintains a buffer of ten downloaded wallpapers.
+ * The mutex and cache/history checks prevent duplicate concurrent downloads.
  */
 object WallpaperPrefetcher {
 
-    const val TARGET_BUFFER_SIZE = 5
-    private const val MAX_SCRAPE_ATTEMPTS_PER_SLOT = 3
-
-    // Prevents concurrent topUp() calls from downloading the same image twice
+    const val TARGET_BUFFER_SIZE = 10
+    private const val MAX_SCRAPE_ATTEMPTS_PER_SLOT = 5
     private val mutex = Mutex()
 
     suspend fun topUp(context: Context) = withContext(Dispatchers.IO) {
@@ -35,34 +29,33 @@ object WallpaperPrefetcher {
             if (needed <= 0) return@withLock
 
             val prefs = context.getSharedPreferences("wallpaper_prefs", Context.MODE_PRIVATE)
-            val urlPool = PreloadedUrls.ALL_URLS.toMutableList()
-            urlPool.addAll(prefs.getStringSet("custom_urls", emptySet()) ?: emptySet())
+            val urlPool = (PreloadedUrls.ALL_URLS +
+                (prefs.getStringSet("custom_urls", emptySet()) ?: emptySet())).distinct()
             if (urlPool.isEmpty()) return@withLock
 
             repeat(needed) {
                 var success = false
                 var attempt = 0
-
                 while (!success && attempt < MAX_SCRAPE_ATTEMPTS_PER_SLOT) {
                     attempt++
                     try {
                         val sourceUrl = urlPool[random.nextInt(urlPool.size)]
-                        val imageUrls = networkHelper.scrapeImageUrls(sourceUrl)
-                        if (imageUrls.isEmpty()) continue
-
+                        val imageUrls = networkHelper.scrapeImageUrls(sourceUrl).shuffled()
                         val available = imageUrls.filter { url ->
-                            !dbHelper.isWallpaperUsed(url) &&
-                            cacheManager.getCachedFile(url) == null
+                            !dbHelper.isWallpaperUsed(url) && cacheManager.getCachedFile(url) == null
                         }
                         if (available.isEmpty()) continue
 
-                        val chosenUrl = available[random.nextInt(available.size)]
-                        val bytes = networkHelper.downloadBytes(chosenUrl) ?: continue
-
-                        val saved = cacheManager.saveToCache(chosenUrl, sourceUrl, bytes)
-                        if (saved != null) success = true
-                    } catch (e: Exception) {
-                        e.printStackTrace()
+                        for (chosenUrl in available.take(5)) {
+                            val bytes = networkHelper.downloadBytes(chosenUrl) ?: continue
+                            val saved = cacheManager.saveToCache(chosenUrl, sourceUrl, bytes)
+                            if (saved != null) {
+                                success = true
+                                break
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // Continue with the next source attempt.
                     }
                 }
             }

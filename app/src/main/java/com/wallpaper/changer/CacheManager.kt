@@ -3,77 +3,55 @@ package com.wallpaper.changer
 import android.content.Context
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 
 /**
- * Manages a rotating buffer of 5 wallpapers with strict 264 MB cap.
- * Each wallpaper has a companion .meta JSON with its source URL.
+ * Bounded rotating cache: at most ten images and 80 MiB total.
+ * A downloaded image is published only after the complete temporary file is written.
  */
 class CacheManager(context: Context) {
+    private val cacheDir = File(context.cacheDir, "wallpaper_cache").apply { mkdirs() }
 
-    private val cacheDir: File = File(context.cacheDir, "wallpaper_cache").apply {
-        if (!exists()) mkdirs()
-    }
+    data class CachedWallpaper(val file: File, val imageUrl: String, val sourceUrl: String)
 
-    companion object {
-        private const val MAX_CACHE_SIZE_BYTES = 264L * 1024 * 1024
-        private const val CACHE_FILENAME_PREFIX = "wp_"
-    }
+    fun getCurrentCacheSize(): Long =
+        cacheDir.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
 
-    data class CachedWallpaper(
-        val file: File,
-        val imageUrl: String,
-        val sourceUrl: String
-    )
-
-    fun getCurrentCacheSize(): Long {
-        return cacheDir.listFiles()?.sumOf { it.length() } ?: 0L
-    }
-
-    fun getReadyCount(): Int {
-        return cacheDir.listFiles()
-            ?.count { it.isFile && it.name.endsWith(".jpg") } ?: 0
-    }
+    fun getReadyCount(): Int =
+        cacheDir.listFiles()?.count { it.isFile && it.name.endsWith(".jpg") && it.length() > 0 } ?: 0
 
     fun getCachedFile(imageUrl: String): File? {
-        val identifier = imageUrl.hashCode().toString()
-        val file = File(cacheDir, "${CACHE_FILENAME_PREFIX}${identifier}.jpg")
-        return if (file.exists()) file else null
+        val file = File(cacheDir, filename(imageUrl))
+        return file.takeIf { it.isFile && it.length() > 0 }
     }
 
-    fun enforceCacheLimit() {
-        val files = cacheDir.listFiles() ?: return
-        var currentSize = files.sumOf { it.length() }
-        if (currentSize <= MAX_CACHE_SIZE_BYTES) return
-        val sortedFiles = files.sortedBy { it.lastModified() }
-        for (file in sortedFiles) {
-            if (currentSize <= MAX_CACHE_SIZE_BYTES) break
-            val fileSize = file.length()
-            if (file.delete()) {
-                currentSize -= fileSize
-                getMetaFileFor(file)?.delete()
-            }
-        }
-    }
-
+    @Synchronized
     fun saveToCache(imageUrl: String, sourceUrl: String, bytes: ByteArray): CachedWallpaper? {
+        if (bytes.isEmpty() || bytes.size > MAX_IMAGE_BYTES) return null
         return try {
-            val identifier = imageUrl.hashCode().toString()
-            val filename = "${CACHE_FILENAME_PREFIX}${identifier}.jpg"
-            val file = File(cacheDir, filename)
-            file.writeBytes(bytes)
-            file.setLastModified(System.currentTimeMillis())
-
+            val id = identifier(imageUrl)
+            val file = File(cacheDir, "${PREFIX}$id.jpg")
+            val temp = File(cacheDir, "${PREFIX}$id.tmp")
+            temp.writeBytes(bytes)
+            if (!temp.renameTo(file)) {
+                temp.copyTo(file, overwrite = true)
+                temp.delete()
+            }
             val meta = JSONObject().apply {
                 put("imageUrl", imageUrl)
                 put("sourceUrl", sourceUrl)
             }
-            File(cacheDir, "${CACHE_FILENAME_PREFIX}${identifier}.meta")
-                .writeText(meta.toString())
-
+            val metaTemp = File(cacheDir, "${PREFIX}$id.meta.tmp")
+            metaTemp.writeText(meta.toString())
+            val metaFile = metaFileFor(file)
+            if (!metaTemp.renameTo(metaFile)) {
+                metaTemp.copyTo(metaFile, overwrite = true)
+                metaTemp.delete()
+            }
+            file.setLastModified(System.currentTimeMillis())
             enforceCacheLimit()
-            CachedWallpaper(file, imageUrl, sourceUrl)
-        } catch (e: Exception) {
-            e.printStackTrace()
+            if (!file.exists()) null else CachedWallpaper(file, imageUrl, sourceUrl)
+        } catch (_: Exception) {
             null
         }
     }
@@ -82,42 +60,75 @@ class CacheManager(context: Context) {
         excludeIdentifiers: Set<String>,
         dbHelper: DatabaseHelper
     ): CachedWallpaper? {
-        val files = cacheDir.listFiles()
-            ?.filter { it.isFile && it.name.endsWith(".jpg") }
-            ?: return null
-
-        val candidates = files.mapNotNull { jpg ->
-            val meta = getMetaFileFor(jpg) ?: return@mapNotNull null
+        val files = cacheDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jpg") } ?: return null
+        val candidates = files.mapNotNull { file ->
+            val meta = metaFileFor(file)
+            if (!meta.exists()) return@mapNotNull null
             try {
                 val json = JSONObject(meta.readText())
                 val imageUrl = json.getString("imageUrl")
                 val sourceUrl = json.getString("sourceUrl")
-                if (excludeIdentifiers.contains(imageUrl)) return@mapNotNull null
-                if (dbHelper.isWallpaperUsed(imageUrl)) return@mapNotNull null
-                CachedWallpaper(jpg, imageUrl, sourceUrl)
-            } catch (e: Exception) {
+                if (excludeIdentifiers.contains(imageUrl) || dbHelper.isWallpaperUsed(imageUrl)) {
+                    null
+                } else {
+                    CachedWallpaper(file, imageUrl, sourceUrl)
+                }
+            } catch (_: Exception) {
                 null
             }
         }
-
-        if (candidates.isEmpty()) return null
-        val chosen = candidates.random()
-        chosen.file.setLastModified(System.currentTimeMillis())
-        return chosen
+        return candidates.randomOrNull()?.also { it.file.setLastModified(System.currentTimeMillis()) }
     }
 
+    @Synchronized
     fun consumeWallpaper(cached: CachedWallpaper) {
         cached.file.delete()
-        getMetaFileFor(cached.file)?.delete()
+        metaFileFor(cached.file).delete()
     }
 
+    @Synchronized
     fun clearCache() {
         cacheDir.listFiles()?.forEach { it.delete() }
     }
 
-    private fun getMetaFileFor(jpgFile: File): File? {
-        val metaName = jpgFile.name.replace(".jpg", ".meta")
-        val meta = File(cacheDir, metaName)
-        return if (meta.exists()) meta else null
+    @Synchronized
+    private fun enforceCacheLimit() {
+        val images = cacheDir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".jpg") }
+            ?.sortedByDescending { it.lastModified() }
+            ?: return
+        var total = 0L
+        var kept = 0
+        for (file in images) {
+            val size = file.length()
+            if (kept < MAX_IMAGES && total + size <= MAX_CACHE_BYTES) {
+                total += size
+                kept++
+            } else {
+                file.delete()
+                metaFileFor(file).delete()
+            }
+        }
+        cacheDir.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach { it.delete() }
+        // Remove metadata files whose corresponding image no longer exists.
+        cacheDir.listFiles()?.filter { it.name.endsWith(".meta") }?.forEach { meta ->
+            val image = File(cacheDir, meta.name.removeSuffix(".meta") + ".jpg")
+            if (!image.exists()) meta.delete()
+        }
+    }
+
+    private fun filename(url: String) = "${PREFIX}${identifier(url)}.jpg"
+    private fun metaFileFor(file: File) = File(cacheDir, file.name.removeSuffix(".jpg") + ".meta")
+
+    private fun identifier(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .take(16).joinToString("") { "%02x".format(it) }
+
+    companion object {
+        private const val PREFIX = "wp_"
+        private const val MAX_IMAGES = 10
+        private const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
+        private const val MAX_CACHE_BYTES = 80L * 1024 * 1024
     }
 }

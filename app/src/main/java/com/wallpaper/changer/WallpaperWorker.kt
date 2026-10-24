@@ -7,178 +7,169 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
-class WallpaperWorker(
-    context: Context,
-    params: WorkerParameters
-) : CoroutineWorker(context, params) {
-
+/**
+ * Uses cached images first. In "both" mode, it deliberately applies two different
+ * images so Home and Lock never receive the same wallpaper during this change.
+ */
+class WallpaperWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val context = applicationContext
+        val db = DatabaseHelper(context)
+        val cache = CacheManager(context)
 
-        val prefs = context.getSharedPreferences("wallpaper_prefs", Context.MODE_PRIVATE)
-        val targetScreen = prefs.getString("target_screen", "home") ?: "home"
+        return try {
+            val prefs = context.getSharedPreferences("wallpaper_prefs", Context.MODE_PRIVATE)
+            val target = prefs.getString("target_screen", "home") ?: "home"
 
-        val dbHelper = DatabaseHelper(context)
-        val cacheManager = CacheManager(context)
-        val networkHelper = NetworkHelper()
+            var first = WallpaperPrefetcher.getInstantWallpaper(context)
+            if (first == null) {
+                first = downloadFreshWallpaper(context, db, cache, NetworkHelper())
+            }
+            if (first == null) {
+                return if (runAttemptCount >= MAX_RETRIES) Result.failure() else Result.retry()
+            }
 
-        if (cacheManager.getReadyCount() == 0) {
-            WallpaperPrefetcher.topUp(context)
-        }
-
-        return when (targetScreen) {
-            "both" -> applyBothScreens(context, dbHelper, cacheManager, networkHelper)
-            "lock" -> applySingleScreen(context, dbHelper, cacheManager, networkHelper, "lock")
-            else -> applySingleScreen(context, dbHelper, cacheManager, networkHelper, "home")
-        }
-    }
-
-    private suspend fun applySingleScreen(
-        context: Context,
-        dbHelper: DatabaseHelper,
-        cacheManager: CacheManager,
-        networkHelper: NetworkHelper,
-        target: String
-    ): Result {
-        val cached = WallpaperPrefetcher.getInstantWallpaper(context)
-        if (cached != null) {
-            val bitmap = BitmapFactory.decodeFile(cached.file.absolutePath)
-            if (bitmap != null && setWallpaper(context, bitmap, target)) {
-                dbHelper.logWallpaper(cached.imageUrl, cached.imageUrl.substringAfterLast("/"), cached.sourceUrl)
-                cacheManager.consumeWallpaper(cached)
-                WallpaperPrefetcher.topUp(context)
+            if (target != "both") {
+                val bitmap = decodeWallpaper(first.file.absolutePath) ?: run {
+                    cache.consumeWallpaper(first)
+                    return if (runAttemptCount >= MAX_RETRIES) Result.failure() else Result.retry()
+                }
+                val flag = if (target == "lock") WallpaperManager.FLAG_LOCK else WallpaperManager.FLAG_SYSTEM
+                val applied = try {
+                    setWallpaper(context, bitmap, flag)
+                } finally {
+                    bitmap.recycle()
+                }
+                if (!applied) return retryOrFail()
+                db.logWallpaper(first.imageUrl, first.imageUrl.substringAfterLast("/"), first.sourceUrl)
+                cache.consumeWallpaper(first)
+                enqueueRefill(context)
                 return Result.success()
             }
-        }
 
-        val downloaded = downloadFreshWallpaper(context, dbHelper, cacheManager, networkHelper)
-        if (downloaded != null) {
-            val bitmap = BitmapFactory.decodeFile(downloaded.file.absolutePath)
-            if (bitmap != null && setWallpaper(context, bitmap, target)) {
-                dbHelper.logWallpaper(downloaded.imageUrl, downloaded.imageUrl.substringAfterLast("/"), downloaded.sourceUrl)
-                cacheManager.consumeWallpaper(downloaded)
-                WallpaperPrefetcher.topUp(context)
-                return Result.success()
-            }
-        }
-
-        return Result.retry()
-    }
-
-    private suspend fun applyBothScreens(
-        context: Context,
-        dbHelper: DatabaseHelper,
-        cacheManager: CacheManager,
-        networkHelper: NetworkHelper
-    ): Result {
-        var homeCached = WallpaperPrefetcher.getInstantWallpaper(context)
-        if (homeCached == null) {
-            homeCached = downloadFreshWallpaper(context, dbHelper, cacheManager, networkHelper)
-        }
-        if (homeCached == null) return Result.retry()
-
-        val homeBitmap = BitmapFactory.decodeFile(homeCached.file.absolutePath)
-        if (homeBitmap == null) return Result.retry()
-
-        var lockCached = WallpaperPrefetcher.getInstantWallpaper(
-            context, excludeIdentifiers = setOf(homeCached.imageUrl)
-        )
-        if (lockCached == null) {
-            lockCached = downloadFreshWallpaper(
-                context, dbHelper, cacheManager, networkHelper,
-                excludeIdentifiers = setOf(homeCached.imageUrl)
+            // Both screens selected: get a second, different, never-before-used image.
+            var second = WallpaperPrefetcher.getInstantWallpaper(
+                context,
+                excludeIdentifiers = setOf(first.imageUrl)
             )
+            if (second == null) {
+                WallpaperPrefetcher.topUp(context)
+                second = WallpaperPrefetcher.getInstantWallpaper(
+                    context,
+                    excludeIdentifiers = setOf(first.imageUrl)
+                )
+            }
+            if (second == null) return retryOrFail()
+
+            val homeBitmap = decodeWallpaper(first.file.absolutePath)
+            val lockBitmap = decodeWallpaper(second.file.absolutePath)
+            if (homeBitmap == null || lockBitmap == null) {
+                homeBitmap?.recycle()
+                lockBitmap?.recycle()
+                if (homeBitmap == null) cache.consumeWallpaper(first)
+                if (lockBitmap == null) cache.consumeWallpaper(second)
+                return retryOrFail()
+            }
+
+            try {
+                // Android offers no atomic API for two different images; decode both
+                // before changing either screen to minimize the chance of a partial update.
+                if (!setWallpaper(context, homeBitmap, WallpaperManager.FLAG_SYSTEM)) {
+                    return retryOrFail()
+                }
+                db.logWallpaper(first.imageUrl, first.imageUrl.substringAfterLast("/"), first.sourceUrl)
+                cache.consumeWallpaper(first)
+
+                if (!setWallpaper(context, lockBitmap, WallpaperManager.FLAG_LOCK)) {
+                    enqueueRefill(context)
+                    return retryOrFail()
+                }
+                db.logWallpaper(second.imageUrl, second.imageUrl.substringAfterLast("/"), second.sourceUrl)
+                cache.consumeWallpaper(second)
+            } finally {
+                homeBitmap.recycle()
+                lockBitmap.recycle()
+            }
+
+            enqueueRefill(context)
+            Result.success()
+        } catch (_: Exception) {
+            retryOrFail()
         }
-        if (lockCached == null) return Result.retry()
+    }
 
-        val lockBitmap = BitmapFactory.decodeFile(lockCached.file.absolutePath)
-        if (lockBitmap == null) return Result.retry()
-
-        val ok = withContext(Dispatchers.Main) {
-            setWallpaper(context, homeBitmap, "home") &&
-            setWallpaper(context, lockBitmap, "lock")
+    private fun setWallpaper(context: Context, bitmap: Bitmap, flags: Int): Boolean {
+        return try {
+            val manager = WallpaperManager.getInstance(context)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                manager.setBitmap(bitmap, null, true, flags)
+            } else {
+                if (flags == WallpaperManager.FLAG_LOCK) return false
+                manager.setBitmap(bitmap)
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
+    }
 
-        if (!ok) return Result.retry()
-
-        dbHelper.logWallpaper(homeCached.imageUrl, homeCached.imageUrl.substringAfterLast("/"), homeCached.sourceUrl)
-        dbHelper.logWallpaper(lockCached.imageUrl, lockCached.imageUrl.substringAfterLast("/"), lockCached.sourceUrl)
-
-        cacheManager.consumeWallpaper(homeCached)
-        cacheManager.consumeWallpaper(lockCached)
-
-        WallpaperPrefetcher.topUp(context)
-
-        return Result.success()
+    private fun decodeWallpaper(path: String): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > MAX_DECODE_DIMENSION ||
+            bounds.outHeight / sample > MAX_DECODE_DIMENSION) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeFile(path, options)
     }
 
     private suspend fun downloadFreshWallpaper(
         context: Context,
-        dbHelper: DatabaseHelper,
-        cacheManager: CacheManager,
-        networkHelper: NetworkHelper,
-        excludeIdentifiers: Set<String> = emptySet()
+        db: DatabaseHelper,
+        cache: CacheManager,
+        network: NetworkHelper
     ): CacheManager.CachedWallpaper? {
         val prefs = context.getSharedPreferences("wallpaper_prefs", Context.MODE_PRIVATE)
-        val urlPool = PreloadedUrls.ALL_URLS.toMutableList()
-        urlPool.addAll(prefs.getStringSet("custom_urls", emptySet()) ?: emptySet())
-        if (urlPool.isEmpty()) return null
-
-        val random = java.util.Random()
-        val maxAttempts = 5
-
-        repeat(maxAttempts) {
-            val sourceUrl = urlPool[random.nextInt(urlPool.size)]
-            val imageUrls = networkHelper.scrapeImageUrls(sourceUrl)
-            if (imageUrls.isEmpty()) return@repeat
-
-            val available = imageUrls.filter { url ->
-                !excludeIdentifiers.contains(url) && !dbHelper.isWallpaperUsed(url)
+        val sources = (PreloadedUrls.ALL_URLS +
+            (prefs.getStringSet("custom_urls", emptySet()) ?: emptySet())).distinct().shuffled()
+        for (source in sources.take(MAX_SOURCE_ATTEMPTS)) {
+            val imageUrls = network.scrapeImageUrls(source).shuffled().take(MAX_IMAGE_ATTEMPTS_PER_SOURCE)
+            for (url in imageUrls) {
+                if (db.isWallpaperUsed(url) || cache.getCachedFile(url) != null) continue
+                val bytes = network.downloadBytes(url) ?: continue
+                val saved = cache.saveToCache(url, source, bytes)
+                if (saved != null) return saved
             }
-            if (available.isEmpty()) return@repeat
-
-            val chosenUrl = available[random.nextInt(available.size)]
-            val bytes = networkHelper.downloadBytes(chosenUrl) ?: return@repeat
-            return cacheManager.saveToCache(chosenUrl, sourceUrl, bytes)
         }
         return null
     }
 
-    private fun setWallpaper(context: Context, bitmap: Bitmap, target: String): Boolean {
-        return try {
-            val wm = WallpaperManager.getInstance(context)
-            when (target) {
-                "home" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
-                    } else {
-                        wm.setBitmap(bitmap)
-                    }
-                }
-                "lock" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
-                    } else {
-                        return false
-                    }
-                }
-                "both" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        wm.setBitmap(bitmap, null, true,
-                            WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
-                    } else {
-                        wm.setBitmap(bitmap)
-                    }
-                }
-                else -> wm.setBitmap(bitmap)
-            }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
+    private fun enqueueRefill(context: Context) {
+        val request = androidx.work.OneTimeWorkRequestBuilder<PrefetchWorker>()
+            .setConstraints(
+                androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .build()
+            )
+            .addTag("wallpaper_prefetch")
+            .build()
+        androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+            "wallpaper_prefetch",
+            androidx.work.ExistingWorkPolicy.KEEP,
+            request
+        )
+    }
+
+    private fun retryOrFail(): Result =
+        if (runAttemptCount >= MAX_RETRIES) Result.failure() else Result.retry()
+
+    companion object {
+        private const val MAX_DECODE_DIMENSION = 4096
+        private const val MAX_SOURCE_ATTEMPTS = 4
+        private const val MAX_IMAGE_ATTEMPTS_PER_SOURCE = 5
+        private const val MAX_RETRIES = 2
     }
 }

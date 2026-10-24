@@ -1,5 +1,6 @@
 package com.wallpaper.changer
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
@@ -19,14 +20,28 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Start screen monitoring from a visible activity. Android requires a foreground
+        // notification for a service that must remain active in the background.
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(
+                this,
+                Intent(this, WallpaperMonitorService::class.java)
+            )
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Could not start automatic monitoring. Open the app again and check battery settings.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
         dbHelper = DatabaseHelper(this)
         cacheManager = CacheManager(this)
         statusText = findViewById(R.id.statusText)
 
-        // Cancel any periodic work scheduled by older versions
         WallpaperScheduler.cancelPeriodicWork(this)
+        WallpaperScheduler.schedulePeriodicWork(this)
 
-        // Fill cache on app open
         lifecycleScope.launch {
             WallpaperPrefetcher.topUp(this@MainActivity)
             updateStatus()
@@ -66,17 +81,19 @@ class MainActivity : AppCompatActivity() {
             val count = dbHelper.getHistoryCount()
             val cacheSizeMb = cacheManager.getCurrentCacheSize() / (1024.0 * 1024.0)
             val ready = cacheManager.getReadyCount()
-            statusText.text = "History: $count | Cache: ${"%.1f".format(cacheSizeMb)} MB | Ready: $ready/5"
+            statusText.text = "History: $count | Cache: ${"%.1f".format(cacheSizeMb)} MB | Ready: $ready/10"
         }
     }
 
     private fun triggerImmediateChange() {
-        lifecycleScope.launch {
-            WallpaperPrefetcher.topUp(this@MainActivity)
-        }
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<WallpaperWorker>()
+            .addTag("wallpaper_change")
             .build()
-        androidx.work.WorkManager.getInstance(this).enqueue(workRequest)
+        androidx.work.WorkManager.getInstance(this).enqueueUniqueWork(
+            "wallpaper_change",
+            androidx.work.ExistingWorkPolicy.REPLACE,
+            workRequest
+        )
         Toast.makeText(this, "Changing wallpaper…", Toast.LENGTH_SHORT).show()
     }
 
@@ -87,16 +104,19 @@ class MainActivity : AppCompatActivity() {
         val targetHome = dialogView.findViewById<android.widget.RadioButton>(R.id.radioHome)
         val targetLock = dialogView.findViewById<android.widget.RadioButton>(R.id.radioLock)
         val targetBoth = dialogView.findViewById<android.widget.RadioButton>(R.id.radioBoth)
-        val switchScreenOff = dialogView.findViewById<android.widget.Switch>(R.id.switchScreenOff)
-        val switchUnlock = dialogView.findViewById<android.widget.Switch>(R.id.switchUnlock)
+        val switchScreenActivity =
+            dialogView.findViewById<android.widget.Switch>(R.id.switchScreenActivity)
 
         when (prefs.getString("target_screen", "home")) {
             "home" -> targetHome.isChecked = true
             "lock" -> targetLock.isChecked = true
             "both" -> targetBoth.isChecked = true
         }
-        switchScreenOff.isChecked = prefs.getBoolean("screen_off_trigger", false)
-        switchUnlock.isChecked = prefs.getBoolean("unlock_trigger", false)
+
+        val legacyEnabled = prefs.getBoolean("screen_off_trigger", false) ||
+            prefs.getBoolean("unlock_trigger", false)
+        switchScreenActivity.isChecked =
+            prefs.getBoolean("screen_activity_trigger", legacyEnabled)
 
         AlertDialog.Builder(this)
             .setTitle(R.string.settings_title)
@@ -107,10 +127,12 @@ class MainActivity : AppCompatActivity() {
                     targetBoth.isChecked -> "both"
                     else -> "home"
                 }
+                val enabled = switchScreenActivity.isChecked
                 prefs.edit()
                     .putString("target_screen", target)
-                    .putBoolean("screen_off_trigger", switchScreenOff.isChecked)
-                    .putBoolean("unlock_trigger", switchUnlock.isChecked)
+                    .putBoolean("screen_activity_trigger", enabled)
+                    .putBoolean("screen_off_trigger", false)
+                    .putBoolean("unlock_trigger", false)
                     .apply()
 
                 updateStatus()
@@ -132,10 +154,15 @@ class MainActivity : AppCompatActivity() {
                 val url = input.text.toString().trim()
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     val prefs = getSharedPreferences("wallpaper_prefs", MODE_PRIVATE)
-                    val existing = prefs.getStringSet("custom_urls", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+                    val existing = prefs.getStringSet("custom_urls", mutableSetOf())
+                        ?.toMutableSet() ?: mutableSetOf()
                     existing.add(url)
                     prefs.edit().putStringSet("custom_urls", existing).apply()
                     Toast.makeText(this, R.string.url_added, Toast.LENGTH_SHORT).show()
+                    lifecycleScope.launch {
+                        WallpaperPrefetcher.topUp(this@MainActivity)
+                        updateStatus()
+                    }
                 } else {
                     Toast.makeText(this, R.string.invalid_url, Toast.LENGTH_SHORT).show()
                 }
@@ -149,6 +176,7 @@ class MainActivity : AppCompatActivity() {
             dbHelper.resetHistory()
             updateStatus()
             Toast.makeText(this@MainActivity, R.string.history_reset, Toast.LENGTH_SHORT).show()
+            WallpaperPrefetcher.topUp(this@MainActivity)
         }
     }
 }
