@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name=".WallpaperChangerApp"
@@ -22,7 +24,17 @@
             </intent-filter>
         </activity>
 
-        <!-- Boot is allowed as a manifest receiver; screen-off/unlock are registered dynamically. -->
+        <service
+            android:name=".WallpaperMonitorService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Monitor screen lock and unlock events for user-enabled wallpaper automation" />
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
