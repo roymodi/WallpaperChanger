@@ -31,7 +31,18 @@ class NetworkHelper {
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext emptyList()
-                val html = response.body?.string()?.take(MAX_HTML_CHARS) ?: return@withContext emptyList()
+                val body = response.body ?: return@withContext emptyList()
+                if (body.contentLength() > MAX_HTML_BYTES) return@withContext emptyList()
+                val html = body.byteStream().bufferedReader().use { reader ->
+                    buildString {
+                        val buffer = CharArray(8192)
+                        while (length < MAX_HTML_CHARS) {
+                            val count = reader.read(buffer, 0, minOf(buffer.size, MAX_HTML_CHARS - length))
+                            if (count < 0) break
+                            append(buffer, 0, count)
+                        }
+                    }
+                }
                 val doc = Jsoup.parse(html, response.request.url.toString())
                 val found = linkedSetOf<String>()
 
@@ -105,7 +116,10 @@ class NetworkHelper {
                 val lower = url.encodedPath.lowercase()
                 // Extension is not mandatory: many CDNs serve images without one.
                 if (!lower.endsWith(".svg") && !lower.endsWith(".gif") &&
-                    !url.host.contains("gravatar.com") && !url.host.contains("logo")) {
+                    !lower.contains("thumbnail") && !lower.contains("/thumb") &&
+                    !lower.contains("/avatar") && !lower.contains("/icon") &&
+                    !lower.contains("/logo") && !url.host.contains("gravatar.com") &&
+                    !url.host.contains("logo")) {
                     out.add(url.toString())
                 }
             }
@@ -123,6 +137,7 @@ class NetworkHelper {
     companion object {
         const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
         private const val MAX_HTML_CHARS = 2_000_000
+        private const val MAX_HTML_BYTES = 4L * 1024 * 1024
         private const val MAX_CANDIDATES = 100
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
     }
