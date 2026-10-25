@@ -97,7 +97,7 @@ class WallpaperWorker(
                 )
             }
             if (lockApplied && localUris.isNotEmpty()) {
-                prefs.edit().putBoolean("next_lock_source_local", !nextLocal).apply()
+                prefs.edit().putBoolean("next_lock_source_local", !lockIsLocal).apply()
             }
 
             home.bitmap.recycle()
