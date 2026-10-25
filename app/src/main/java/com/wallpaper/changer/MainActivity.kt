@@ -14,6 +14,11 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 
 class MainActivity : AppCompatActivity() {
 
@@ -71,6 +76,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
+        findViewById<Button>(R.id.btnRefreshNow).setOnClickListener {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+            val request = OneTimeWorkRequestBuilder<WallpaperWorker>()
+                .setConstraints(constraints)
+                .addTag("manual_wallpaper_refresh")
+                .build()
+            WorkManager.getInstance(this).enqueueUniqueWork(
+                "manual_wallpaper_refresh",
+                ExistingWorkPolicy.REPLACE,
+                request
+            )
+            prefs.edit().putString("last_result", "Manual refresh queued").apply()
+            updateStatus()
+            Toast.makeText(this, "Wallpaper refresh started", Toast.LENGTH_SHORT).show()
+        }
         findViewById<Button>(R.id.btnSelectLocalImages).setOnClickListener {
             localImagePicker.launch(arrayOf("image/*"))
         }
