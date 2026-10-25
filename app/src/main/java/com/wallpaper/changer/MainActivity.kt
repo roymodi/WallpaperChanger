@@ -1,5 +1,6 @@
 package com.wallpaper.changer
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.ArrayAdapter
@@ -10,10 +11,9 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.textfield.TextInputEditText
-import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,6 +26,26 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var scheduleSwitch: Switch
 
+    private val localImagePicker = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        val prefs = getSharedPreferences(prefsName, MODE_PRIVATE)
+        val selected = prefs.getStringSet("local_image_uris", emptySet())?.toMutableSet()
+            ?: mutableSetOf()
+        uris.forEach { uri ->
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            selected.add(uri.toString())
+        }
+        prefs.edit().putStringSet("local_image_uris", selected).apply()
+        updateStatus()
+        Toast.makeText(this, "${selected.size} local lock-screen image(s) saved", Toast.LENGTH_SHORT).show()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -34,9 +54,8 @@ class MainActivity : AppCompatActivity() {
         scheduleSwitch = findViewById(R.id.switchSchedule)
         val prefs = getSharedPreferences(prefsName, MODE_PRIVATE)
 
-        // Stop old screen-event/cache work left by previous versions.
+        // Remove legacy event-trigger and prefetch jobs from older app versions.
         WallpaperScheduler.cancelLegacyWork(this)
-        File(cacheDir, "wallpaper_cache").deleteRecursively()
 
         scheduleSwitch.isChecked = prefs.getBoolean("schedule_enabled", false)
         scheduleSwitch.setOnCheckedChangeListener { _, enabled ->
@@ -52,7 +71,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
-        findViewById<Button>(R.id.btnAddUrl).setOnClickListener { showAddUrlDialog() }
+        findViewById<Button>(R.id.btnSelectLocalImages).setOnClickListener {
+            localImagePicker.launch(arrayOf("image/*"))
+        }
         updateStatus()
     }
 
@@ -76,13 +97,22 @@ class MainActivity : AppCompatActivity() {
             "mobile" -> "Mobile data only"
             else -> "Wi-Fi or mobile data"
         }
+        val localCount = prefs.getStringSet("local_image_uris", emptySet())?.size ?: 0
         val lastResult = prefs.getString("last_result", "No wallpaper change yet")
         statusText.text = "Schedule: " + (if (enabled) "ON" else "OFF") +
             "\nInterval: " + intervalLabel +
             "\nTarget: " + target +
             "\nNetwork: " + network +
+            "\nLock-screen local images: " + localCount +
             "\nLast result: " + (lastResult ?: "No wallpaper change yet")
+        scheduleSwitch.setOnCheckedChangeListener(null)
         scheduleSwitch.isChecked = enabled
+        scheduleSwitch.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("schedule_enabled", checked).apply()
+            if (checked) WallpaperScheduler.scheduleFromPreferences(this)
+            else WallpaperScheduler.cancelSchedule(this)
+            updateStatus()
+        }
     }
 
     private fun showSettingsDialog() {
@@ -135,32 +165,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 updateStatus()
                 Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showAddUrlDialog() {
-        val input = TextInputEditText(this).apply {
-            hint = "https://example.com/wallpaper.jpg or a wallpaper page"
-            setSingleLine(true)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Add wallpaper URL")
-            .setMessage("Add a direct image URL or a page containing wallpaper images.")
-            .setView(input)
-            .setPositiveButton("Add") { _, _ ->
-                val url = input.text?.toString()?.trim().orEmpty()
-                val parsed = runCatching { Uri.parse(url) }.getOrNull()
-                if ((parsed?.scheme == "https" || parsed?.scheme == "http") && !parsed.host.isNullOrBlank()) {
-                    val prefs = getSharedPreferences(prefsName, MODE_PRIVATE)
-                    val urls = prefs.getStringSet("custom_urls", emptySet())?.toMutableSet() ?: mutableSetOf()
-                    urls.add(url)
-                    prefs.edit().putStringSet("custom_urls", urls).apply()
-                    Toast.makeText(this, "URL added", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Enter a valid http or https URL", Toast.LENGTH_SHORT).show()
-                }
             }
             .setNegativeButton("Cancel", null)
             .show()
