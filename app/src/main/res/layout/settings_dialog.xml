@@ -10,13 +10,27 @@
         android:orientation="vertical">
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/target_screen"
+            android:text="Change interval"
             android:textStyle="bold"
-            android:layout_marginTop="8dp" />
+            android:layout_marginBottom="6dp" />
+
+        <Spinner
+            android:id="@+id/spinnerInterval"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="18dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Change wallpaper on"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
 
         <RadioGroup
+            android:id="@+id/targetGroup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
@@ -25,39 +39,33 @@
                 android:id="@+id/radioHome"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/home_screen" />
+                android:text="Home screen only" />
 
             <RadioButton
                 android:id="@+id/radioLock"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/lock_screen" />
+                android:text="Lock screen only" />
 
             <RadioButton
                 android:id="@+id/radioBoth"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/both_screens" />
+                android:text="Both screens (different images)" />
         </RadioGroup>
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/event_triggers"
+            android:text="Use network"
             android:textStyle="bold"
-            android:layout_marginTop="24dp" />
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="6dp" />
 
-        <Switch
-            android:id="@+id/switchScreenOff"
+        <Spinner
+            android:id="@+id/spinnerNetwork"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/trigger_on_screen_off" />
-
-        <Switch
-            android:id="@+id/switchUnlock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/trigger_on_unlock" />
+            android:layout_height="wrap_content" />
 
     </LinearLayout>
 </ScrollView>

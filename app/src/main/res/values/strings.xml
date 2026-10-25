@@ -1,25 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Wallpaper Changer</string>
-    <string name="status_format">History: %1$d wallpapers | Cache: %2$.1f MB</string>
-    <string name="change_now">Change Wallpaper Now</string>
-    <string name="settings">Settings</string>
-    <string name="add_custom_url">Add Custom URL</string>
-    <string name="reset_history">Reset History</string>
-    <string name="clear_cache">Clear Cache</string>
-    <string name="settings_title">Settings</string>
-    <string name="target_screen">Target Screen</string>
-    <string name="home_screen">Home Screen Only</string>
-    <string name="lock_screen">Lock Screen Only</string>
-    <string name="both_screens">Both Screens</string>
-    <string name="event_triggers">Event Triggers</string>
-    <string name="trigger_on_screen_off">Change on screen off</string>
-    <string name="trigger_on_unlock">Change on unlock</string>
-    <string name="save">Save</string>
-    <string name="cancel">Cancel</string>
-    <string name="add">Add</string>
-    <string name="url_added">URL added to pool</string>
-    <string name="invalid_url">Invalid URL. Must start with http:// or https://</string>
-    <string name="history_reset">History reset. Wallpapers can now repeat.</string>
-    <string name="settings_saved">Settings saved</string>
 </resources>

@@ -1,24 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
-    <uses-permission android:name="android.permission.SET_WALLPAPER_HINTS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:allowBackup="true"
-
         android:label="@string/app_name"
-
         android:supportsRtl="true"
-        android:theme="@style/Theme.WallpaperChanger"
-        tools:targetApi="34">
+        android:theme="@style/Theme.WallpaperChanger">
 
         <activity
             android:name=".MainActivity"
@@ -30,18 +22,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Lock/Unlock Event Receiver -->
-        <receiver
-            android:name=".WallpaperService"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.SCREEN_OFF" />
-                <action android:name="android.intent.action.USER_PRESENT" />
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
-
-        <!-- WorkManager is initialized automatically via androidx.startup -->
+        <!-- WorkManager restores enabled periodic work after reboot. -->
     </application>
 </manifest>

@@ -6,8 +6,9 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "wallpaper_log")
 data class WallpaperLog(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val identifier: String,        // Unique image URL or hash
+    val identifier: String,        // Canonical direct image URL
     val imageName: String,         // Filename or descriptive name
-    val sourceUrl: String,         // The website URL it came from
+    val sourceUrl: String,         // Source page or custom URL
+    val contentHash: String = "",  // SHA-256 fingerprint prevents duplicate files from different URLs
     val timestamp: Long = System.currentTimeMillis()
 )
