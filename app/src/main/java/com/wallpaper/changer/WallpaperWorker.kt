@@ -58,13 +58,9 @@ class WallpaperWorker(
             }
 
             val homeApplied = applyBitmap(context, first.bitmap, "home")
-            if (homeApplied) {
-                history.logWallpaper(first.identifier, first.imageName, first.sourceUrl, first.contentHash)
-            }
+            if (homeApplied) history.logWallpaper(first.identifier, first.imageName, first.sourceUrl, first.contentHash)
             val lockApplied = applyBitmap(context, second.bitmap, "lock")
-            if (lockApplied) {
-                history.logWallpaper(second.identifier, second.imageName, second.sourceUrl, second.contentHash)
-            }
+            if (lockApplied) history.logWallpaper(second.identifier, second.imageName, second.sourceUrl, second.contentHash)
 
             first.bitmap.recycle()
             second.bitmap.recycle()
@@ -122,7 +118,7 @@ class WallpaperWorker(
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256")
             .digest(bytes)
-            .joinToString("") { "%02x".format(it) }
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     private fun canonicalIdentifier(url: String): String {
         return runCatching {

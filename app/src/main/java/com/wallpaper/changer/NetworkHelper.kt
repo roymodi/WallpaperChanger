@@ -91,8 +91,11 @@ class NetworkHelper {
 
     private fun isValidImageUrl(url: String): Boolean {
         val lower = url.lowercase()
-        return (lower.contains(".jpg") || lower.contains(".jpeg") ||
-            lower.contains(".png") || lower.contains(".webp")) &&
+        val host = runCatching { URL(url).host.lowercase() }.getOrDefault("")
+        val knownImageCdn = host == "images.unsplash.com" || host == "images.pexels.com"
+        val hasImageExtension = listOf(".jpg", ".jpeg", ".png", ".webp", ".bmp")
+            .any { lower.contains(it) }
+        return (hasImageExtension || knownImageCdn) &&
             !lower.contains("icon") && !lower.contains("logo") &&
             !lower.contains("avatar") && !lower.contains("thumb")
     }
