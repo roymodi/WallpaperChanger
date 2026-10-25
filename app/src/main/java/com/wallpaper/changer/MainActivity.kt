@@ -19,6 +19,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 
 class MainActivity : AppCompatActivity() {
 
@@ -82,6 +83,7 @@ class MainActivity : AppCompatActivity() {
                 .build()
             val request = OneTimeWorkRequestBuilder<WallpaperWorker>()
                 .setConstraints(constraints)
+                .setInputData(workDataOf("manual_refresh" to true))
                 .addTag("manual_wallpaper_refresh")
                 .build()
             WorkManager.getInstance(this).enqueueUniqueWork(
