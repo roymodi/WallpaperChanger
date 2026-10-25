@@ -25,7 +25,8 @@ class WallpaperWorker(
         val context = applicationContext
         val prefs = context.getSharedPreferences("wallpaper_prefs", Context.MODE_PRIVATE)
 
-        if (!prefs.getBoolean("schedule_enabled", false)) return@withContext Result.success()
+        val manualRefresh = inputData.getBoolean("manual_refresh", false)
+        if (!manualRefresh && !prefs.getBoolean("schedule_enabled", false)) return@withContext Result.success()
 
         val networkMode = prefs.getString("network_mode", "any") ?: "any"
         if (!isAllowedNetwork(context, networkMode)) {
